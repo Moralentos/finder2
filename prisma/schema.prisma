@@ -1,0 +1,63 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id         String     @id @default(uuid())
+  telegramId BigInt     @unique
+  username   String?
+  status     UserStatus @default(ORDINARY)
+  createdAt  DateTime   @default(now())
+  usages     Usage[]
+
+  @@index([telegramId])
+  @@map("users")
+}
+
+model ApiKey {
+  id           String   @id @default(uuid())
+  type         KeyType
+  apiKey       String   @unique
+  totalUses    Int      @default(0)
+  dailyUses    Int      @default(0)
+  initialLimit Int
+  dailyLimit   Int      @default(100)
+  isNew        Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  isActive     Boolean  @default(true)
+  usages       Usage[]
+
+  @@index([type, isActive, dailyUses])
+  @@map("api_keys")
+}
+
+model Usage {
+  id        String   @id @default(uuid())
+  userId    String
+  keyId     String
+  apiType   KeyType
+  timestamp DateTime @default(now())
+  date      DateTime @default(now())
+
+  user User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  key  ApiKey @relation(fields: [keyId], references: [id], onDelete: Cascade)
+
+  @@index([userId, date])
+  @@map("usages")
+}
+
+enum UserStatus {
+  ORDINARY
+  PREMIUM
+  ADMIN
+}
+
+enum KeyType {
+  SAUCENAO
+  SCRAPER
+}

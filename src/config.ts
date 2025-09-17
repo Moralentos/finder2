@@ -1,13 +1,8 @@
 export class Config {
-  //Кол-во запросов за N секунд
-  static userRequests: number = 10;
-  static timeRequests: number = 10000; //ms
+  static adminId: number = 989759353; // Замените на ваш Telegram ID
+  static maxUserRequestsPerDay: number = 7; // Лимит запросов/день для обычных пользователей
 
-  static setUserRequests(count: number): void {
-    Config.userRequests = count;
-  }
-
-  static setTimeRequests(count: number): void {
-    Config.timeRequests = count;
+  static setMaxUserRequestsPerDay(count: number): void {
+    Config.maxUserRequestsPerDay = count;
   }
 }
