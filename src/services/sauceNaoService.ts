@@ -17,6 +17,8 @@ export const sauceNaoService = {
         `http://api.scraperapi.com?api_key=${scraperKey.apiKey}&url=${encodeURIComponent(sauceNAOUrl)}`,
       );
 
+      const creditsUsed = response.headers["x-scraperapi-credits-used"];
+      console.log(creditsUsed);
       const data = response.data;
       if (typeof data === "string" && data.includes("<!DOCTYPE html")) {
         logger.error("HTML от SauceNAO:", data);

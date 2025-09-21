@@ -42,7 +42,7 @@ export const photoHandler =
         await userService.recordUsage(prisma, userId, "SCRAPER", ctx.session);
       }
 
-      return ctx.reply(sauceResult, {
+      return ctx.reply(sauceResult + "\nОстаток" + ctx.session.todayUses, {
         parse_mode: "HTML",
         // @ts-ignore
         disable_web_page_preview: true,

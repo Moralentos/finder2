@@ -2,11 +2,7 @@ import { MiddlewareFn } from "grammy";
 import { PrismaClient } from "@prisma/client";
 import { userService } from "../services/userService";
 import { Config } from "../config";
-import { SessionContext } from "../bot";
-
-interface SessionData {
-  todayUses: number;
-}
+import { SessionContext, SessionData } from "../bot";
 
 export const rateLimitMiddleware =
   (prisma: PrismaClient): MiddlewareFn<SessionContext> =>
@@ -22,7 +18,7 @@ export const rateLimitMiddleware =
     );
     if (user.status !== "ORDINARY") return next(); // Премиум/админ без лимитов
 
-    const session = ctx.session;
+    const session: SessionData = ctx.session;
     if (!session.todayUses) {
       session.todayUses = await userService.getTodayUses(prisma, userId);
     }

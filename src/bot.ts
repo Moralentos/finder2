@@ -8,7 +8,7 @@ import { logger } from "./utils/logger";
 import cron from "node-cron";
 import { Config } from "./config";
 
-interface SessionData {
+export interface SessionData {
   todayUses: number;
 }
 
@@ -16,7 +16,7 @@ export type SessionContext = Context & SessionFlavor<SessionData>;
 
 export class TG {
   private core: Bot<SessionContext>;
-  private prisma: PrismaClient;
+  private readonly prisma: PrismaClient;
 
   constructor(token: string) {
     this.core = new Bot<SessionContext>(token);
