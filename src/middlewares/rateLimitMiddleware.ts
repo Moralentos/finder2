@@ -2,13 +2,16 @@ import { MiddlewareFn } from "grammy";
 import { PrismaClient } from "@prisma/client";
 import { userService } from "../services/userService";
 import { Config } from "../config";
-import { SessionContext, SessionData } from "../bot";
+import { SessionContext } from "../bot";
+
+interface SessionData {
+  todayUses: number;
+}
 
 export const rateLimitMiddleware =
   (prisma: PrismaClient): MiddlewareFn<SessionContext> =>
   async (ctx, next) => {
-    console.log("rateLimitMiddleware");
-    const userId = ctx.from?.id;
+    const userId = String(ctx.from?.id);
     if (!userId || !ctx.message?.photo) return next();
 
     const user = await userService.getOrCreateUser(
@@ -16,15 +19,13 @@ export const rateLimitMiddleware =
       userId,
       ctx.from?.username || "",
     );
-    if (user.status !== "ORDINARY") return next(); // Премиум/админ без лимитов
+    if (user.status !== "ORDINARY") return next();
 
-    const session: SessionData = ctx.session;
-    if (!session.todayUses) {
-      session.todayUses = await userService.getTodayUses(prisma, userId);
-    }
-    if (session.todayUses >= Config.maxUserRequestsPerDay) {
+    const session = ctx.session;
+    session.todayUses = session.todayUses ?? Config.maxUserRequestsPerDay; // Начинаем с 7
+    if (session.todayUses <= 0) {
       return ctx.reply(
-        `Лимит: ${Config.maxUserRequestsPerDay} запросов в сутки. Попробуй завтра!`,
+        `Лимит: ${Config.maxUserRequestsPerDay} запросов в сутки исчерпан. Попробуй завтра!`,
       );
     }
 

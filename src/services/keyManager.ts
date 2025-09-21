@@ -5,92 +5,107 @@ import { differenceInMonths } from "date-fns";
 
 const lock = new AsyncLock();
 
-interface ApiKeyWithLimits {
+interface ApiKeyWithRemaining {
   id: string;
   type: "SAUCENAO" | "SCRAPER";
   apiKey: string;
-  totalUses: number;
-  dailyUses: number;
-  initialLimit: number;
-  dailyLimit: number;
+  longRemaining: number;
+  isActive: boolean;
   isNew: boolean;
   createdAt: Date;
-  isActive: boolean;
-  effectiveLimit: number;
-  totalRemaining: number;
 }
 
 export const keyManager = {
   async getAvailableKey(
     prisma: PrismaClient,
     type: "SAUCENAO" | "SCRAPER",
-  ): Promise<ApiKeyWithLimits | null> {
+  ): Promise<ApiKeyWithRemaining | null> {
     return lock.acquire(`key:${type}`, async () => {
-      const keys = await prisma.apiKey.findMany({
-        where: { type, isActive: true },
-        orderBy: { createdAt: "asc" },
-      });
+      try {
+        const keys = await prisma.apiKey.findMany({
+          where: { type, isActive: true },
+          orderBy: { createdAt: "asc" },
+        });
 
-      for (const key of keys) {
-        const effectiveLimit =
-          type === "SAUCENAO"
-            ? key.initialLimit
-            : key.isNew && differenceInMonths(new Date(), key.createdAt) < 1
-              ? 5000
-              : 1000;
+        logger.info(`Найдено ключей для ${type}: ${keys.length}`);
 
-        const dailyRemaining = key.dailyLimit - key.dailyUses;
-        const totalRemaining = effectiveLimit - key.totalUses;
+        for (const key of keys) {
+          const effectiveLimit =
+            type === "SAUCENAO"
+              ? key.longRemaining
+              : key.isNew && differenceInMonths(new Date(), key.createdAt) < 1
+                ? 5000
+                : 1000;
 
-        if (dailyRemaining > 0 && totalRemaining > 0) {
-          logger.info(
-            `Выбран ключ ${type}:${key.id}, остаток: ${totalRemaining}/${effectiveLimit}`,
-          );
-          return { ...key, effectiveLimit, totalRemaining };
-        }
+          if (effectiveLimit > 0) {
+            logger.info(
+              `Выбран ключ ${type}:${key.id}, остаток: ${effectiveLimit}`,
+            );
+            return { ...key };
+          }
 
-        if (
-          type === "SCRAPER" &&
-          differenceInMonths(new Date(), key.createdAt) >= 1
-        ) {
-          await prisma.apiKey.update({
-            where: { id: key.id },
-            data: { totalUses: 0, isNew: false },
-          });
-          logger.info(
-            `Ключ Scraper ${key.id} сброшен, новый лимит: 1000/месяц`,
-          );
-          if (dailyRemaining > 0) {
-            return { ...key, effectiveLimit: 1000, totalRemaining: 1000 };
+          if (
+            type === "SCRAPER" &&
+            differenceInMonths(new Date(), key.createdAt) >= 1
+          ) {
+            await prisma.apiKey.update({
+              where: { id: key.id },
+              data: { longRemaining: 1000, isNew: false },
+            });
+            logger.info(
+              `Ключ Scraper ${key.id} сброшен, новый лимит: 1000/месяц`,
+            );
+            return { ...key, longRemaining: 1000 };
           }
         }
+        logger.warn(`Нет доступных ключей для ${type}`);
+        return null;
+      } catch (error: any) {
+        logger.error(
+          `Ошибка при получении ключей для ${type}: ${error.message}`,
+          error.stack,
+        );
+        return null;
       }
-      logger.warn(`Нет доступных ключей для ${type}`);
-      return null;
     });
   },
 
-  async recordUsage(
+  async updateRemaining(
     tx: Prisma.TransactionClient,
     keyId: string,
     type: "SAUCENAO" | "SCRAPER",
+    longRemaining?: number, // Для SAUCENAO: из ответа API, для SCRAPER: декремент
   ): Promise<void> {
     return lock.acquire(`usage:${keyId}`, async () => {
-      const key = await tx.apiKey.findUnique({ where: { id: keyId } });
-      if (!key) throw new Error("Ключ не найден");
+      try {
+        const key = await tx.apiKey.findUnique({ where: { id: keyId } });
+        if (!key) {
+          logger.error(`Ключ ${type}:${keyId} не найден в базе`);
+          throw new Error("Ключ не найден");
+        }
 
-      await tx.apiKey.update({
-        where: { id: keyId },
-        data: { dailyUses: { increment: 1 }, totalUses: { increment: 1 } },
-      });
+        const newRemaining =
+          type === "SAUCENAO"
+            ? (longRemaining ?? key.longRemaining)
+            : key.longRemaining - 1;
 
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      if (key.dailyUses >= key.dailyLimit) {
         await tx.apiKey.update({
           where: { id: keyId },
-          data: { dailyUses: 0 },
+          data: {
+            longRemaining: Math.max(0, newRemaining),
+            isActive: newRemaining > 0,
+          },
         });
+
+        logger.info(
+          `Ключ ${type}:${keyId} обновлён, longRemaining: ${newRemaining}, isActive: ${newRemaining > 0}`,
+        );
+      } catch (error: any) {
+        logger.error(
+          `Ошибка при обновлении ключа ${type}:${keyId}: ${error.message}`,
+          error.stack,
+        );
+        throw error;
       }
     });
   },

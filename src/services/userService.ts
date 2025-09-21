@@ -1,12 +1,19 @@
 import { PrismaClient } from "@prisma/client";
-import { keyManager } from "./keyManager";
+
+interface User {
+  id: string;
+  telegramId: number;
+  username: string | null;
+  status: "ORDINARY" | "PREMIUM" | "ADMIN";
+  createdAt: Date;
+}
 
 export const userService = {
   async getOrCreateUser(
     prisma: PrismaClient,
-    telegramId: number,
+    telegramId: string,
     username?: string,
-  ): Promise<any> {
+  ): Promise<User> {
     return prisma.user.upsert({
       where: { telegramId },
       update: { username },
@@ -14,31 +21,14 @@ export const userService = {
     });
   },
 
-  async getTodayUses(prisma: PrismaClient, userId: number): Promise<number> {
-    const id: string = String(userId);
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    return prisma.usage.count({
-      where: { id, date: { gte: today } },
-    });
-  },
-
   async recordUsage(
     prisma: PrismaClient,
-    userId: number,
+    userId: string,
     apiType: "SAUCENAO" | "SCRAPER",
-    session: any,
   ): Promise<void> {
     const user = await userService.getOrCreateUser(prisma, userId);
-    const key = await keyManager.getAvailableKey(prisma, apiType);
-    if (!key) throw new Error("Нет доступных ключей");
-
-    await prisma.$transaction(async (tx) => {
-      await tx.usage.create({
-        data: { userId: user.id, keyId: key.id, apiType },
-      });
-      await keyManager.recordUsage(tx, key.id, apiType);
-      session.todayUses = (session.todayUses || 0) + 1;
+    await prisma.usage.create({
+      data: { userId: user.id, apiType },
     });
   },
 };

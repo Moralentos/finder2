@@ -4,8 +4,7 @@ import { keyManager } from "./keyManager";
 import { logger } from "../utils/logger";
 
 export const sauceNaoService = {
-  async search(imageUrl: string): Promise<string> {
-    const prisma = new PrismaClient();
+  async search(prisma: PrismaClient, imageUrl: string): Promise<string> {
     try {
       const sauceKey = await keyManager.getAvailableKey(prisma, "SAUCENAO");
       if (!sauceKey) return "Лимит ключей SauceNAO исчерпан.";
@@ -13,21 +12,45 @@ export const sauceNaoService = {
       if (!scraperKey) return "Лимит ключей ScraperAPI исчерпан.";
 
       const sauceNAOUrl = `https://saucenao.com/search.php?db=999&output_type=2&numres=1&url=${encodeURIComponent(imageUrl)}&api_key=${sauceKey.apiKey}`;
+      logger.info(`Полный URL SauceNAO: ${sauceNAOUrl}`);
       const response = await axios.get(
         `http://api.scraperapi.com?api_key=${scraperKey.apiKey}&url=${encodeURIComponent(sauceNAOUrl)}`,
       );
 
-      const creditsUsed = response.headers["x-scraperapi-credits-used"];
-      console.log(creditsUsed);
       const data = response.data;
       if (typeof data === "string" && data.includes("<!DOCTYPE html")) {
-        logger.error("HTML от SauceNAO:", data);
-        return "Ошибка: SauceNAO не смог обработать URL.";
+        logger.error(
+          "HTML-ответ от SauceNAO, возможно, неверный ключ или лимит исчерпан:",
+          data.slice(0, 200),
+        );
+        await prisma.$transaction(async (tx) => {
+          await keyManager.updateRemaining(tx, sauceKey.id, "SAUCENAO", 0);
+          await keyManager.updateRemaining(tx, scraperKey.id, "SCRAPER");
+        });
+        return "Ошибка: SauceNAO вернул ошибку. Возможно, лимит ключей исчерпан.";
       }
 
-      const remaining = data.header?.long_remaining || "N/A";
+      const longRemaining =
+        data.header?.long_remaining ?? sauceKey.longRemaining;
+      await prisma.$transaction(async (tx) => {
+        await keyManager.updateRemaining(
+          tx,
+          sauceKey.id,
+          "SAUCENAO",
+          longRemaining,
+        );
+        await keyManager.updateRemaining(tx, scraperKey.id, "SCRAPER");
+      });
 
-      if (data.header?.status === 0 && data.results?.length > 0) {
+      if (data.header?.status !== 0) {
+        const message = data.header?.message || "Неизвестная ошибка";
+        logger.error(
+          `Ошибка API SauceNAO: ${message}, остаток: ${longRemaining}`,
+        );
+        return `Ошибка API SauceNAO: ${message}. Остаток: ${longRemaining}/100.`;
+      }
+
+      if (data.results?.length > 0) {
         const result = data.results[0];
         const header = result.header || {};
         const dataResult = result.data || {};
@@ -56,21 +79,14 @@ export const sauceNaoService = {
           `<b>🎥 IMDB ID:</b> ${imdbId}\n` +
           `<b>📂 Источник:</b> ${indexName}\n` +
           `<b>🖼️ Миниатюра:</b> ${thumbnail}\n` +
-          `<b>📈 Остаток лимита SauceNAO:</b> ${remaining}/100 запросов в день`
+          `<b>📈 Остаток лимита SauceNAO:</b> ${longRemaining}/100 запросов в день`
         );
-      } else if (data.header?.status !== 0) {
-        const message = data.header?.message || "Неизвестная ошибка";
-        if (message.includes("Too many requests")) {
-          return `Ошибка: Превышен лимит ключей. Остаток: ${remaining}/100.`;
-        }
-        return `Ошибка API SauceNAO: ${message}. Остаток: ${remaining}/100.`;
       }
-      return `Нет результатов. Остаток лимита SauceNAO: ${remaining}/100.`;
+
+      return `Нет результатов. Остаток лимита SauceNAO: ${longRemaining}/100.`;
     } catch (error: any) {
-      logger.error("Ошибка в sauceNaoService:", error.message);
+      logger.error("Ошибка в sauceNaoService:", error.message, error.stack);
       return `Ошибка поиска: ${error.message || "неизвестная ошибка"}`;
-    } finally {
-      await prisma.$disconnect();
     }
   },
 };

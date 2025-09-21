@@ -8,13 +8,10 @@ interface ApiKey {
   id: string;
   type: "SAUCENAO" | "SCRAPER";
   apiKey: string;
-  totalUses: number;
-  dailyUses: number;
-  initialLimit: number;
-  dailyLimit: number;
+  longRemaining: number;
+  isActive: boolean;
   isNew: boolean;
   createdAt: Date;
-  isActive: boolean;
 }
 
 export const adminHandler =
@@ -29,7 +26,7 @@ export const adminHandler =
       const today = new Date();
       today.setHours(0, 0, 0, 0);
       const todayUses = await prisma.usage.count({
-        where: { date: { gte: today } },
+        where: { timestamp: { gte: today } },
       });
       const newUsers = await prisma.user.count({
         where: { createdAt: { gte: today } },
@@ -38,39 +35,31 @@ export const adminHandler =
       const saucenaoKeys = (await prisma.apiKey.findMany({
         where: { type: "SAUCENAO" },
       })) as ApiKey[];
-      const saucenaoTotalLimit = saucenaoKeys.reduce(
-        (sum, key) => sum + key.initialLimit,
+      const saucenaoRemaining = saucenaoKeys.reduce(
+        (sum, key) => sum + (key.isActive ? key.longRemaining : 0),
         0,
       );
-      const saucenaoTotalUses = saucenaoKeys.reduce(
-        (sum, key) => sum + key.totalUses,
-        0,
-      );
-      const saucenaoRemaining = saucenaoTotalLimit - saucenaoTotalUses;
 
       const scraperKeys = (await prisma.apiKey.findMany({
         where: { type: "SCRAPER" },
       })) as ApiKey[];
-      const scraperTotalLimit = scraperKeys.reduce(
+      const scraperRemaining = scraperKeys.reduce(
         (sum, key) =>
           sum +
-          (key.isNew && differenceInMonths(new Date(), key.createdAt) < 1
-            ? 5000
-            : 1000),
+          (key.isActive
+            ? key.isNew && differenceInMonths(new Date(), key.createdAt) < 1
+              ? 5000
+              : 1000
+            : 0),
         0,
       );
-      const scraperTotalUses = scraperKeys.reduce(
-        (sum, key) => sum + key.totalUses,
-        0,
-      );
-      const scraperRemaining = scraperTotalLimit - scraperTotalUses;
 
       const stats =
         `📊 Статистика бота:\n` +
         `Сегодня использований: ${todayUses}\n` +
         `Новых пользователей сегодня: ${newUsers}\n` +
-        `Остаток SauceNAO: ${saucenaoRemaining}/${saucenaoTotalLimit}\n` +
-        `Остаток ScraperAPI: ${scraperRemaining}/${scraperTotalLimit}`;
+        `Остаток SauceNAO: ${saucenaoRemaining}/100\n` +
+        `Остаток ScraperAPI: ${scraperRemaining}/6000`;
 
       return ctx.reply(stats);
     }
@@ -79,33 +68,29 @@ export const adminHandler =
       if (!ctx.match || typeof ctx.match !== "string") {
         logger.warn("ctx.match is undefined or not a string");
         return ctx.reply(
-          "Ошибка: неверный формат команды. Пример: /admin add_key SAUCENAO key 100 false",
+          "Ошибка: неверный формат команды. Пример: /admin add_key SAUCENAO key true",
         );
       }
 
-      const args = ctx.match.trim().split(/\s+/); // Используем RegExp для разделения по пробелам
+      const args = ctx.match.trim().split(/\s+/);
       if (args[0] === "add_key") {
-        if (args.length < 5) {
+        if (args.length < 4) {
           return ctx.reply(
-            "Ошибка: недостаточно аргументов. Пример: /admin add_key SAUCENAO key 100 false",
+            "Ошибка: недостаточно аргументов. Пример: /admin add_key SAUCENAO key true",
           );
         }
-        const [type, key, initialLimit, isNew] = args.slice(1);
+        const [type, key, isNew] = args.slice(1);
         if (!["SAUCENAO", "SCRAPER"].includes(type)) {
           return ctx.reply(
             "Ошибка: тип ключа должен быть SAUCENAO или SCRAPER",
           );
         }
-        const initialLimitNum = parseInt(initialLimit);
-        if (isNaN(initialLimitNum)) {
-          return ctx.reply("Ошибка: initialLimit должен быть числом");
-        }
         await prisma.apiKey.create({
           data: {
             type: type as "SAUCENAO" | "SCRAPER",
             apiKey: key,
-            initialLimit: initialLimitNum,
-            dailyLimit: type === "SAUCENAO" ? 100 : 1000,
+            longRemaining:
+              type === "SAUCENAO" ? 100 : isNew === "true" ? 5000 : 1000,
             isNew: isNew === "true",
           },
         });
@@ -128,7 +113,7 @@ export const adminHandler =
           );
         }
         await prisma.user.update({
-          where: { telegramId: telegramIdNum },
+          where: { telegramId: String(telegramIdNum) },
           data: { status: status as "ORDINARY" | "PREMIUM" | "ADMIN" },
         });
         return ctx.reply(

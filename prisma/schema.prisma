@@ -8,47 +8,39 @@ datasource db {
 }
 
 model User {
-  id         String     @id @default(uuid())
-  telegramId BigInt     @unique
+  id         String   @id @default(uuid())
+  telegramId String   @unique
   username   String?
   status     UserStatus @default(ORDINARY)
-  createdAt  DateTime   @default(now())
+  createdAt  DateTime @default(now())
   usages     Usage[]
 
-  @@index([telegramId])
   @@map("users")
+  @@index([telegramId])
 }
 
 model ApiKey {
-  id           String   @id @default(uuid())
-  type         KeyType
-  apiKey       String   @unique
-  totalUses    Int      @default(0)
-  dailyUses    Int      @default(0)
-  initialLimit Int
-  dailyLimit   Int      @default(100)
-  isNew        Boolean  @default(true)
-  createdAt    DateTime @default(now())
-  isActive     Boolean  @default(true)
-  usages       Usage[]
+  id            String   @id @default(uuid())
+  type          KeyType
+  apiKey        String   @unique
+  longRemaining Int      @default(100) // Для SAUCENAO: остаток запросов, для SCRAPER: примерный остаток
+  isActive      Boolean  @default(true)
+  isNew         Boolean  @default(true) // Только для SCRAPER
+  createdAt     DateTime @default(now())
 
-  @@index([type, isActive, dailyUses])
   @@map("api_keys")
+  @@index([type, isActive])
 }
 
 model Usage {
   id        String   @id @default(uuid())
   userId    String
-  keyId     String
   apiType   KeyType
   timestamp DateTime @default(now())
-  date      DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  user User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-  key  ApiKey @relation(fields: [keyId], references: [id], onDelete: Cascade)
-
-  @@index([userId, date])
   @@map("usages")
+  @@index([userId, timestamp])
 }
 
 enum UserStatus {

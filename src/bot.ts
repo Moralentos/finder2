@@ -1,4 +1,4 @@
-import { Bot, Context, session, SessionFlavor } from "grammy";
+import { Bot, Context, session } from "grammy";
 import { limit } from "@grammyjs/ratelimiter";
 import { PrismaClient } from "@prisma/client";
 import { photoHandler } from "./handlers/photoHandler";
@@ -8,15 +8,15 @@ import { logger } from "./utils/logger";
 import cron from "node-cron";
 import { Config } from "./config";
 
-export interface SessionData {
+interface SessionData {
   todayUses: number;
 }
 
-export type SessionContext = Context & SessionFlavor<SessionData>;
+export type SessionContext = Context & { session: SessionData };
 
 export class TG {
   private core: Bot<SessionContext>;
-  private readonly prisma: PrismaClient;
+  private prisma: PrismaClient;
 
   constructor(token: string) {
     this.core = new Bot<SessionContext>(token);
@@ -24,17 +24,15 @@ export class TG {
   }
 
   public async init(): Promise<void> {
-    // Инициализация БД
     await this.prisma.$connect();
     logger.info("Prisma подключен к PostgreSQL");
   }
 
   public async setup(): Promise<void> {
-    // Grammy limit: 10 запросов/10 секунд на пользователя
     this.core.use(
       limit({
-        timeFrame: 10000, // 10 секунд
-        limit: 10, // 10 запросов
+        timeFrame: 10000,
+        limit: 10,
         onLimitExceeded: async (ctx) => {
           logger.warn(
             `[RateLimiter] Пользователь ${ctx.from?.id} превысил лимит запросов`,
@@ -45,37 +43,41 @@ export class TG {
       }),
     );
 
-    // Сессии для хранения todayUses
-    this.core.use(session({ initial: () => ({ todayUses: 0 }) }));
-
-    // Проверка лимита 7/сутки
+    this.core.use(session({ initial: () => ({ todayUses: 7 }) }));
     this.core.use(rateLimitMiddleware(this.prisma));
 
-    // Обработчики
     this.core.command("start", async (ctx) => {
-      const userId = ctx.from?.id;
+      const userId = String(ctx.from?.id);
       if (!userId) return;
       await this.prisma.user.upsert({
         where: { telegramId: userId },
         update: {},
         create: { telegramId: userId, username: ctx.from?.username || "" },
       });
-      await ctx.reply("Привет! Отправь фото для поиска аниме. Лимит: 7/сутки.");
+      await ctx.reply(
+        `Привет! Отправь фото для поиска аниме. Лимит: ${Config.maxUserRequestsPerDay}/сутки.`,
+      );
     });
 
     this.core.command("stats", adminHandler("stats", this.prisma));
+    this.core.command("profile", (ctx) => {
+      ctx.reply(`Остаток ${ctx.session.todayUses}`);
+    });
     this.core.command("admin", adminHandler("admin", this.prisma));
     this.core.on("message:photo", photoHandler(this.prisma));
 
-    // Отладка Config (опционально)
     this.core.on("message", async (ctx) => {
-      await ctx.reply(`Макс. запросов/день: ${Config.maxUserRequestsPerDay}`);
+      if (!ctx.message?.photo) {
+        await ctx.reply(`Макс. запросов/день: ${Config.maxUserRequestsPerDay}`);
+      }
     });
 
-    // Cron: ежедневный сброс dailyUses
     cron.schedule("0 0 * * *", async () => {
-      await this.prisma.apiKey.updateMany({ data: { dailyUses: 0 } });
-      logger.info("Ежедневный сброс dailyUses выполнен.");
+      await this.prisma.apiKey.updateMany({
+        where: { isActive: false },
+        data: { isActive: true },
+      });
+      logger.info("Сброс isActive для неактивных ключей выполнен.");
     });
   }
 
@@ -90,6 +92,5 @@ export class TG {
     logger.info("Stopping bot");
     await this.prisma.$disconnect();
     await this.core.stop();
-    // process.exit(0);
   }
 }
