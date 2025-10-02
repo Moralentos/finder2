@@ -1,4 +1,4 @@
-import { Context, SessionFlavor } from "grammy";
+import { Context } from "grammy";
 import { PrismaClient } from "@prisma/client";
 import { sauceNaoService } from "../services/sauceNaoService";
 import { userService } from "../services/userService";
@@ -7,83 +7,110 @@ import axios from "axios";
 import sharp from "sharp";
 import FormData from "form-data";
 import { Config } from "../config";
+import { SessionContext } from "../bot";
+import AsyncLock from "async-lock";
 
-interface SessionData {
-  todayUses: number; // Остаток запросов (начинается с 7)
-}
+const lock = new AsyncLock();
 
 export const photoHandler =
-  (prisma: PrismaClient) =>
-  async (ctx: Context & SessionFlavor<SessionData>) => {
+  (prisma: PrismaClient) => async (ctx: SessionContext) => {
     const userId = ctx.from?.id?.toString();
     if (!userId) {
       logger.error("ID пользователя не найден");
       return ctx.reply("Ошибка: ID пользователя не найден.");
     }
 
-    const user = await userService.getOrCreateUser(
-      prisma,
-      userId,
-      ctx.from?.username || "",
-    );
-    if (user.status === "ORDINARY") {
-      ctx.session.todayUses =
-        ctx.session.todayUses ?? Config.maxUserRequestsPerDay;
-      if (ctx.session.todayUses <= 0) {
-        return ctx.reply(
-          `Лимит: ${Config.maxUserRequestsPerDay} запросов в сутки исчерпан. Попробуй завтра!`,
+    // Используем AsyncLock для блокировки обработки на уровне пользователя
+    return lock.acquire(`photo:${userId}`, async () => {
+      // Устанавливаем флаг обработки
+      ctx.session.isProcessingPhoto = true;
+
+      // Устанавливаем таймер для сброса флага через 30 секунд
+      const timeout = setTimeout(() => {
+        ctx.session.isProcessingPhoto = false;
+        logger.warn(
+          `Таймаут обработки для пользователя ${userId}, флаг сброшен`,
         );
+      }, 30000);
+
+      try {
+        const user = await userService.getOrCreateUser(
+          prisma,
+          userId,
+          ctx.from?.username || "",
+        );
+        if (user.status === "ORDINARY") {
+          ctx.session.todayUses =
+            ctx.session.todayUses ?? Config.maxUserRequestsPerDay;
+          if (ctx.session.todayUses <= 0) {
+            ctx.session.isProcessingPhoto = false;
+            clearTimeout(timeout);
+            return ctx.reply(
+              `Лимит: ${Config.maxUserRequestsPerDay} запросов в сутки исчерпан. Попробуй завтра!`,
+            );
+          }
+        }
+
+        if (!ctx.message?.photo || ctx.message.photo.length === 0) {
+          logger.error("Фото не найдено в сообщении");
+          ctx.session.isProcessingPhoto = false;
+          clearTimeout(timeout);
+          return ctx.reply("Ошибка: отправьте фото.");
+        }
+
+        const photo = ctx.message.photo[ctx.message.photo.length - 1];
+        const fileId = photo.file_id;
+        await ctx.reply("Загружаю изображение...");
+        const imageBuffer = await downloadFile(ctx, fileId);
+        if (!imageBuffer) {
+          logger.error("Не удалось скачать файл");
+          ctx.session.isProcessingPhoto = false;
+          clearTimeout(timeout);
+          return ctx.reply("Ошибка при скачивании файла.");
+        }
+
+        const imageUrl = await uploadToTmpFiles(imageBuffer);
+        if (!imageUrl) {
+          logger.error("Не удалось загрузить изображение на tmpfiles.org");
+          ctx.session.isProcessingPhoto = false;
+          clearTimeout(timeout);
+          return ctx.reply("Ошибка при загрузке изображения.");
+        }
+
+        await ctx.reply("Ищу изображение на SauceNAO...");
+        const sauceResult = await sauceNaoService.search(prisma, imageUrl);
+
+        // Проверяем, успешный ли результат (не содержит "error:")
+        if (sauceResult.startsWith("error:")) {
+          ctx.session.isProcessingPhoto = false;
+          clearTimeout(timeout);
+          return ctx.reply(sauceResult.replace("error:", ""));
+        }
+
+        // Успешный результат: уменьшаем лимит и записываем использование
+        if (user.status === "ORDINARY") {
+          ctx.session.todayUses -= 1;
+          await userService.recordUsage(prisma, userId, "SAUCENAO");
+          await userService.recordUsage(prisma, userId, "SCRAPER");
+        }
+
+        ctx.session.isProcessingPhoto = false;
+        clearTimeout(timeout);
+        return ctx.reply(
+          `${sauceResult}\n<b>Остаток запросов:</b> ${ctx.session.todayUses}`,
+          {
+            parse_mode: "HTML",
+            // @ts-ignore
+            disable_web_page_preview: true,
+          },
+        );
+      } catch (error: any) {
+        logger.error("Ошибка в photoHandler:", error.message, error.stack);
+        ctx.session.isProcessingPhoto = false;
+        clearTimeout(timeout);
+        return ctx.reply("Ошибка поиска. Попробуй снова.");
       }
-    }
-
-    try {
-      if (!ctx.message?.photo || ctx.message.photo.length === 0) {
-        logger.error("Фото не найдено в сообщении");
-        return ctx.reply("Ошибка: отправьте фото.");
-      }
-
-      const photo = ctx.message.photo[ctx.message.photo.length - 1];
-      const fileId = photo.file_id;
-      await ctx.reply("Загружаю изображение...");
-      const imageBuffer = await downloadFile(ctx, fileId);
-      if (!imageBuffer) {
-        logger.error("Не удалось скачать файл");
-        return ctx.reply("Ошибка при скачивании файла.");
-      }
-
-      const imageUrl = await uploadToTmpFiles(imageBuffer);
-      if (!imageUrl) {
-        logger.error("Не удалось загрузить изображение на tmpfiles.org");
-        return ctx.reply("Ошибка при загрузке изображения.");
-      }
-
-      await ctx.reply("Ищу изображение на SauceNAO...");
-      const sauceResult = await sauceNaoService.search(prisma, imageUrl);
-
-      // Проверяем, успешный ли результат (не содержит "error:")
-      if (sauceResult.startsWith("error:")) {
-        return ctx.reply(sauceResult.replace("error:", ""));
-      }
-
-      // Успешный результат: уменьшаем лимит и записываем использование
-      if (user.status === "ORDINARY") {
-        ctx.session.todayUses -= 1;
-        await userService.recordUsage(prisma, userId, "SAUCENAO");
-        await userService.recordUsage(prisma, userId, "SCRAPER");
-      }
-
-      return ctx.reply(
-        `${sauceResult}\n<b>Остаток запросов:</b> ${ctx.session.todayUses}`,
-        {
-          parse_mode: "HTML",
-          // @ts-ignore
-          disable_web_page_preview: true,
-        },
-      );
-    } catch (error: any) {
-      logger.error("Ошибка в photoHandler:", error.message, error.stack);
-      return ctx.reply("Ошибка поиска. Попробуй снова.");
-    }
+    });
   };
 
 async function downloadFile(

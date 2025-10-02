@@ -6,6 +6,7 @@ import { SessionContext } from "../bot";
 
 interface SessionData {
   todayUses: number;
+  isProcessingPhoto: boolean; // Флаг для отслеживания обработки фото
 }
 
 export const rateLimitMiddleware =
@@ -23,6 +24,15 @@ export const rateLimitMiddleware =
 
     const session = ctx.session;
     session.todayUses = session.todayUses ?? Config.maxUserRequestsPerDay; // Начинаем с 7
+
+    // Проверяем, обрабатывается ли уже фото
+    if (session.isProcessingPhoto) {
+      await ctx.reply(
+        "⏳ Пожалуйста, дождитесь завершения обработки предыдущего фото.",
+      );
+      return;
+    }
+
     if (session.todayUses <= 0) {
       return ctx.reply(
         `Лимит: ${Config.maxUserRequestsPerDay} запросов в сутки исчерпан. Попробуй завтра!`,

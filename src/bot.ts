@@ -1,4 +1,4 @@
-import { Bot, Context, session } from "grammy";
+import { Bot, Context, session, SessionFlavor } from "grammy";
 import { limit } from "@grammyjs/ratelimiter";
 import { PrismaClient } from "@prisma/client";
 import { photoHandler } from "./handlers/photoHandler";
@@ -11,9 +11,10 @@ import { run } from "@grammyjs/runner";
 
 interface SessionData {
   todayUses: number;
+  isProcessingPhoto: boolean; // Флаг для отслеживания обработки фото
 }
 
-export type SessionContext = Context & { session: SessionData };
+export type SessionContext = Context & SessionFlavor<SessionData>;
 
 export class TG {
   private core: Bot<SessionContext>;
@@ -44,7 +45,14 @@ export class TG {
       }),
     );
 
-    this.core.use(session({ initial: () => ({ todayUses: 7 }) }));
+    this.core.use(
+      session({
+        initial: (): SessionData => ({
+          todayUses: 7,
+          isProcessingPhoto: false,
+        }),
+      }),
+    );
     this.core.use(rateLimitMiddleware(this.prisma));
 
     this.core.command("start", async (ctx) => {
@@ -62,7 +70,9 @@ export class TG {
 
     this.core.command("stats", adminHandler("stats", this.prisma));
     this.core.command("profile", (ctx) => {
-      ctx.reply(`Остаток ${ctx.session.todayUses}`);
+      ctx.reply(
+        `Остаток ${ctx.session.todayUses}\n${ctx.session.isProcessingPhoto}`,
+      );
     });
     this.core.command("admin", adminHandler("admin", this.prisma));
     this.core.on("message:photo", photoHandler(this.prisma));
