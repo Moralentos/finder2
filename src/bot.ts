@@ -7,6 +7,7 @@ import { rateLimitMiddleware } from "./middlewares/rateLimitMiddleware";
 import { logger } from "./utils/logger";
 import cron from "node-cron";
 import { Config } from "./config";
+import { run } from "@grammyjs/runner";
 
 interface SessionData {
   todayUses: number;
@@ -85,7 +86,8 @@ export class TG {
     await this.init();
     await this.setup();
     logger.info("Starting bot");
-    await this.core.start();
+    // await this.core.start();
+    run(this.core);
   }
 
   public async stop(): Promise<void> {
