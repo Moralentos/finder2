@@ -5,7 +5,7 @@ import { differenceInMonths } from "date-fns";
 
 const lock = new AsyncLock();
 
-interface ApiKeyWithRemaining {
+export interface ApiKeyWithRemaining {
   id: string;
   type: "SAUCENAO" | "SCRAPER";
   apiKey: string;
@@ -24,40 +24,46 @@ export const keyManager = {
       try {
         const keys = await prisma.apiKey.findMany({
           where: { type, isActive: true },
-          orderBy: { createdAt: "asc" },
         });
 
         logger.info(`Найдено ключей для ${type}: ${keys.length}`);
-
-        for (const key of keys) {
-          const effectiveLimit =
-            type === "SAUCENAO"
-              ? key.longRemaining
-              : key.isNew && differenceInMonths(new Date(), key.createdAt) < 1
-                ? 5000
-                : 1000;
-
-          if (effectiveLimit > 0) {
-            logger.info(
-              `Выбран ключ ${type}:${key.id}, остаток: ${effectiveLimit}`,
-            );
-            return { ...key };
-          }
-
-          if (
-            type === "SCRAPER" &&
-            differenceInMonths(new Date(), key.createdAt) >= 1
-          ) {
-            await prisma.apiKey.update({
-              where: { id: key.id },
-              data: { longRemaining: 1000, isNew: false },
-            });
-            logger.info(
-              `Ключ Scraper ${key.id} сброшен, новый лимит: 1000/месяц`,
-            );
-            return { ...key, longRemaining: 1000 };
-          }
+        if (keys.length === 0) {
+          logger.warn(`Нет доступных ключей для ${type}`);
+          return null;
         }
+
+        // Случайный выбор ключа
+        const randomIndex = Math.floor(Math.random() * keys.length);
+        const key = keys[randomIndex];
+
+        const effectiveLimit =
+          type === "SAUCENAO"
+            ? key.longRemaining
+            : key.isNew && differenceInMonths(new Date(), key.createdAt) < 1
+              ? 5000
+              : 1000;
+
+        if (effectiveLimit > 0) {
+          logger.info(
+            `Выбран ключ ${type}:${key.id}, остаток: ${effectiveLimit}`,
+          );
+          return { ...key };
+        }
+
+        if (
+          type === "SCRAPER" &&
+          differenceInMonths(new Date(), key.createdAt) >= 1
+        ) {
+          await prisma.apiKey.update({
+            where: { id: key.id },
+            data: { longRemaining: 1000, isNew: false },
+          });
+          logger.info(
+            `Ключ Scraper ${key.id} сброшен, новый лимит: 1000/месяц`,
+          );
+          return { ...key, longRemaining: 1000 };
+        }
+
         logger.warn(`Нет доступных ключей для ${type}`);
         return null;
       } catch (error: any) {

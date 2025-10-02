@@ -28,7 +28,7 @@ export const photoHandler =
     );
     if (user.status === "ORDINARY") {
       ctx.session.todayUses =
-        ctx.session.todayUses ?? Config.maxUserRequestsPerDay; // Начинаем с 7
+        ctx.session.todayUses ?? Config.maxUserRequestsPerDay;
       if (ctx.session.todayUses <= 0) {
         return ctx.reply(
           `Лимит: ${Config.maxUserRequestsPerDay} запросов в сутки исчерпан. Попробуй завтра!`,
@@ -58,10 +58,16 @@ export const photoHandler =
       }
 
       await ctx.reply("Ищу изображение на SauceNAO...");
-      const sauceResult = await sauceNaoService.search(prisma, imageUrl); // Передаём prisma
+      const sauceResult = await sauceNaoService.search(prisma, imageUrl);
 
+      // Проверяем, успешный ли результат (не содержит "error:")
+      if (sauceResult.startsWith("error:")) {
+        return ctx.reply(sauceResult.replace("error:", ""));
+      }
+
+      // Успешный результат: уменьшаем лимит и записываем использование
       if (user.status === "ORDINARY") {
-        ctx.session.todayUses -= 1; // Уменьшаем остаток
+        ctx.session.todayUses -= 1;
         await userService.recordUsage(prisma, userId, "SAUCENAO");
         await userService.recordUsage(prisma, userId, "SCRAPER");
       }
