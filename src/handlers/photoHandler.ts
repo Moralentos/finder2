@@ -20,12 +20,9 @@ export const photoHandler =
       return ctx.reply("Ошибка: ID пользователя не найден.");
     }
 
-    // Используем AsyncLock для блокировки обработки на уровне пользователя
     return lock.acquire(`photo:${userId}`, async () => {
-      // Устанавливаем флаг обработки
       ctx.session.isProcessingPhoto = true;
 
-      // Устанавливаем таймер для сброса флага через 30 секунд
       const timeout = setTimeout(() => {
         ctx.session.isProcessingPhoto = false;
         logger.warn(
@@ -80,18 +77,19 @@ export const photoHandler =
         await ctx.reply("Ищу изображение на SauceNAO...");
         const sauceResult = await sauceNaoService.search(prisma, imageUrl);
 
-        // Проверяем, успешный ли результат (не содержит "error:")
         if (sauceResult.startsWith("error:")) {
           ctx.session.isProcessingPhoto = false;
           clearTimeout(timeout);
           return ctx.reply(sauceResult.replace("error:", ""));
         }
 
-        // Успешный результат: уменьшаем лимит и записываем использование
         if (user.status === "ORDINARY") {
           ctx.session.todayUses -= 1;
-          await userService.recordUsage(prisma, userId, "SAUCENAO");
-          await userService.recordUsage(prisma, userId, "SCRAPER");
+          await userService.recordUsage(prisma, userId); // Одна запись за поиск
+        }
+
+        if (user.status === "PREMIUM") {
+          await userService.recordUsage(prisma, userId); // Одна запись за поиск
         }
 
         ctx.session.isProcessingPhoto = false;

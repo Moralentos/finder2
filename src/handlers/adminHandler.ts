@@ -23,13 +23,50 @@ export const adminHandler =
     }
 
     if (command === "stats") {
+      // Устанавливаем начало и конец дня в UTC
       const today = new Date();
-      today.setHours(0, 0, 0, 0);
+      today.setUTCHours(0, 0, 0, 0); // 00:00 UTC
+      const tomorrow = new Date(today);
+      tomorrow.setUTCDate(today.getUTCDate() + 1); // 00:00 следующего дня в UTC
+
+      // Для отладки: логируем диапазон
+      logger.info(
+        `Диапазон для todayUses: ${today.toISOString()} - ${tomorrow.toISOString()}`,
+      );
+
       const todayUses = await prisma.usage.count({
-        where: { timestamp: { gte: today } },
+        where: {
+          timestamp: {
+            gte: today,
+            lt: tomorrow,
+          },
+        },
       });
+
+      // Для отладки: логируем найденные записи
+      const usageDetails = await prisma.usage.findMany({
+        where: {
+          timestamp: {
+            gte: today,
+            lt: tomorrow,
+          },
+        },
+        select: { id: true, userId: true, timestamp: true },
+      });
+      logger.info(`Найдено записей в usages: ${usageDetails.length}`);
+      usageDetails.forEach((usage) =>
+        logger.info(
+          `Usage: id=${usage.id}, userId=${usage.userId}, timestamp=${usage.timestamp.toISOString()}`,
+        ),
+      );
+
       const newUsers = await prisma.user.count({
-        where: { createdAt: { gte: today } },
+        where: {
+          createdAt: {
+            gte: today,
+            lt: tomorrow,
+          },
+        },
       });
 
       const saucenaoKeys = (await prisma.apiKey.findMany({
@@ -55,8 +92,8 @@ export const adminHandler =
       );
 
       const stats =
-        `📊 Статистика бота:\n` +
-        `Сегодня использований: ${todayUses}\n` +
+        `Статистика бота:\n` +
+        `Сегодня поисков: ${todayUses}\n` +
         `Новых пользователей сегодня: ${newUsers}\n` +
         `Остаток SauceNAO: ${saucenaoRemaining}/100\n` +
         `Остаток ScraperAPI: ${scraperRemaining}/6000`;

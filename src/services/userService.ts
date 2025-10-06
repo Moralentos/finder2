@@ -21,14 +21,10 @@ export const userService = {
     });
   },
 
-  async recordUsage(
-    prisma: PrismaClient,
-    userId: string,
-    apiType: "SAUCENAO" | "SCRAPER",
-  ): Promise<void> {
+  async recordUsage(prisma: PrismaClient, userId: string): Promise<void> {
     const user = await userService.getOrCreateUser(prisma, userId);
     await prisma.usage.create({
-      data: { userId: user.id, apiType },
+      data: { userId: user.id },
     });
   },
 };
