@@ -44,6 +44,7 @@ export const photoHandler =
             clearTimeout(timeout);
             return ctx.reply(
               `Лимит: ${Config.maxUserRequestsPerDay} запросов в сутки исчерпан. Попробуй завтра!`,
+              { reply_to_message_id: ctx.message?.message_id },
             );
           }
         }
@@ -52,49 +53,84 @@ export const photoHandler =
           logger.error("Фото не найдено в сообщении");
           ctx.session.isProcessingPhoto = false;
           clearTimeout(timeout);
-          return ctx.reply("Ошибка: отправьте фото.");
+          return ctx.reply("Ошибка: отправьте фото.", {
+            reply_to_message_id: ctx.message?.message_id,
+          });
+        }
+
+        if (!ctx.chat) {
+          logger.error("Чат не найден");
+          ctx.session.isProcessingPhoto = false;
+          clearTimeout(timeout);
+          return ctx.reply("Ошибка: чат не найден.");
         }
 
         const photo = ctx.message.photo[ctx.message.photo.length - 1];
         const fileId = photo.file_id;
-        await ctx.reply("Загружаю изображение...");
+        const loadingMessage = await ctx.reply("Загружаю изображение...", {
+          reply_to_message_id: ctx.message.message_id,
+        });
+
         const imageBuffer = await downloadFile(ctx, fileId);
         if (!imageBuffer) {
           logger.error("Не удалось скачать файл");
           ctx.session.isProcessingPhoto = false;
           clearTimeout(timeout);
-          return ctx.reply("Ошибка при скачивании файла.");
+          await ctx.api.editMessageText(
+            ctx.chat.id,
+            loadingMessage.message_id,
+            "Ошибка при скачивании файла.",
+          );
+          return;
         }
+
+        await ctx.api.editMessageText(
+          ctx.chat.id,
+          loadingMessage.message_id,
+          "Ищу изображение на SauceNAO...",
+        );
 
         const imageUrl = await uploadToTmpFiles(imageBuffer);
         if (!imageUrl) {
           logger.error("Не удалось загрузить изображение на tmpfiles.org");
           ctx.session.isProcessingPhoto = false;
           clearTimeout(timeout);
-          return ctx.reply("Ошибка при загрузке изображения.");
+          await ctx.api.editMessageText(
+            ctx.chat.id,
+            loadingMessage.message_id,
+            "Ошибка при загрузке изображения.",
+          );
+          return;
         }
 
-        await ctx.reply("Ищу изображение на SauceNAO...");
         const sauceResult = await sauceNaoService.search(prisma, imageUrl);
 
         if (sauceResult.startsWith("error:")) {
           ctx.session.isProcessingPhoto = false;
           clearTimeout(timeout);
-          return ctx.reply(sauceResult.replace("error:", ""));
+          await ctx.api.editMessageText(
+            ctx.chat.id,
+            loadingMessage.message_id,
+            sauceResult.replace("error:", ""),
+          );
+          return;
         }
 
         if (user.status === "ORDINARY") {
           ctx.session.todayUses -= 1;
-          await userService.recordUsage(prisma, userId); // Одна запись за поиск
+          await userService.recordUsage(prisma, userId);
         }
 
         if (user.status === "PREMIUM") {
-          await userService.recordUsage(prisma, userId); // Одна запись за поиск
+          await userService.recordUsage(prisma, userId);
         }
 
         ctx.session.isProcessingPhoto = false;
         clearTimeout(timeout);
-        return ctx.reply(
+
+        await ctx.api.editMessageText(
+          ctx.chat.id,
+          loadingMessage.message_id,
           `${sauceResult}\n<b>Остаток запросов:</b> ${ctx.session.todayUses}`,
           {
             parse_mode: "HTML",
@@ -106,7 +142,13 @@ export const photoHandler =
         logger.error("Ошибка в photoHandler:", error.message, error.stack);
         ctx.session.isProcessingPhoto = false;
         clearTimeout(timeout);
-        return ctx.reply("Ошибка поиска. Попробуй снова.");
+        if (ctx.message?.message_id) {
+          await ctx.reply("Ошибка поиска. Попробуй снова.", {
+            reply_to_message_id: ctx.message.message_id,
+          });
+        } else {
+          await ctx.reply("Ошибка поиска. Попробуй снова.");
+        }
       }
     });
   };
