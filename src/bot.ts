@@ -9,11 +9,14 @@ import cron from "node-cron";
 import { Config } from "./config";
 import { run } from "@grammyjs/runner";
 
+// Определяем интерфейс SessionData
 interface SessionData {
   todayUses: number;
-  isProcessingPhoto: boolean; // Флаг для отслеживания обработки фото
+  isProcessingPhoto: boolean;
+  lastResetDate?: string; // Для отслеживания даты последнего сброса
 }
 
+// Определяем SessionContext как Context с SessionFlavor<SessionData>
 export type SessionContext = Context & SessionFlavor<SessionData>;
 
 export class TG {
@@ -45,11 +48,13 @@ export class TG {
       }),
     );
 
+    // Инициализируем сессию
     this.core.use(
       session({
         initial: (): SessionData => ({
-          todayUses: 7,
+          todayUses: Config.maxUserRequestsPerDay,
           isProcessingPhoto: false,
+          lastResetDate: new Date().toISOString().split("T")[0], // Текущая дата
         }),
       }),
     );
@@ -60,7 +65,7 @@ export class TG {
       if (!userId) return;
       await this.prisma.user.upsert({
         where: { telegramId: userId },
-        update: {},
+        update: { username: ctx.from?.username || "" },
         create: { telegramId: userId, username: ctx.from?.username || "" },
       });
       await ctx.reply(
@@ -69,10 +74,8 @@ export class TG {
     });
 
     this.core.command("stats", adminHandler("stats", this.prisma));
-    this.core.command("profile", (ctx) => {
-      ctx.reply(
-        `Остаток ${ctx.session.todayUses}\n${ctx.session.isProcessingPhoto}`,
-      );
+    this.core.command("profile", async (ctx) => {
+      ctx.reply(`Остаток запросов: ${ctx.session.todayUses}`);
     });
     this.core.command("admin", adminHandler("admin", this.prisma));
     this.core.on("message:photo", photoHandler(this.prisma));
@@ -83,12 +86,9 @@ export class TG {
       }
     });
 
-    cron.schedule("0 0 * * *", async () => {
-      await this.prisma.apiKey.updateMany({
-        where: { isActive: false },
-        data: { isActive: true },
-      });
-      logger.info("Сброс isActive для неактивных ключей выполнен.");
+    // Сбрасываем лимиты в полночь MSK (21:00 UTC)
+    cron.schedule("0 0 21 * * *", () => {
+      logger.info("Запланированный сброс лимитов пользователей в полночь MSK");
     });
   }
 
@@ -96,7 +96,6 @@ export class TG {
     await this.init();
     await this.setup();
     logger.info("Starting bot");
-    // await this.core.start();
     run(this.core);
   }
 
