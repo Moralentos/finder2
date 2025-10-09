@@ -36,18 +36,23 @@ export const keyManager = {
         const randomIndex = Math.floor(Math.random() * keys.length);
         const key = keys[randomIndex];
 
-        const effectiveLimit =
-          type === "SAUCENAO"
-            ? key.longRemaining
-            : key.isNew && differenceInMonths(new Date(), key.createdAt) < 1
+        if (type === "SAUCENAO") {
+          logger.info(
+            `Выбран ключ SAUCENAO:${key.id}, longRemaining: ${key.longRemaining}`,
+          );
+          return { ...key }; // Возвращаем ключ, если isActive=true, игнорируем longRemaining
+        } else {
+          // Для SCRAPER оставляем как было
+          const effectiveLimit =
+            key.isNew && differenceInMonths(new Date(), key.createdAt) < 1
               ? 5000
               : 1000;
-
-        if (effectiveLimit > 0) {
-          logger.info(
-            `Выбран ключ ${type}:${key.id}, остаток: ${effectiveLimit}`,
-          );
-          return { ...key };
+          if (effectiveLimit > 0) {
+            logger.info(
+              `Выбран ключ SCRAPER:${key.id}, остаток: ${effectiveLimit}`,
+            );
+            return { ...key };
+          }
         }
 
         if (

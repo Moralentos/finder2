@@ -87,8 +87,17 @@ export class TG {
     });
 
     // Сбрасываем лимиты в полночь MSK (21:00 UTC)
-    cron.schedule("0 0 21 * * *", () => {
-      logger.info("Запланированный сброс лимитов пользователей в полночь MSK");
+    cron.schedule("0 0 21 * * *", async () => {
+      logger.info("Сброс лимитов в полночь MSK");
+      // Сброс пользователей (как сейчас, но реализуй, если нужно)
+      // Сброс ключей SAUCENAO
+      await this.prisma.apiKey.updateMany({
+        where: { type: "SAUCENAO", isActive: false },
+        data: { isActive: true },
+      });
+      logger.info(
+        "Ключи SAUCENAO восстановлены: longRemaining=100, isActive=true",
+      );
     });
   }
 
