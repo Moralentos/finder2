@@ -1,3 +1,4 @@
+// src/bot.ts
 import { Bot, Context, session, SessionFlavor } from "grammy";
 import { limit } from "@grammyjs/ratelimiter";
 import { PrismaClient } from "@prisma/client";
@@ -20,8 +21,8 @@ interface SessionData {
 export type SessionContext = Context & SessionFlavor<SessionData>;
 
 export class TG {
-  private core: Bot<SessionContext>;
-  private prisma: PrismaClient;
+  private readonly core: Bot<SessionContext>;
+  private readonly prisma: PrismaClient;
 
   constructor(token: string) {
     this.core = new Bot<SessionContext>(token);
@@ -75,7 +76,7 @@ export class TG {
 
     this.core.command("stats", adminHandler("stats", this.prisma));
     this.core.command("profile", async (ctx) => {
-      ctx.reply(`Остаток запросов: ${ctx.session.todayUses}`);
+      await ctx.reply(`Остаток запросов: ${ctx.session.todayUses}`);
     });
     this.core.command("admin", adminHandler("admin", this.prisma));
     this.core.on("message:photo", photoHandler(this.prisma));
@@ -87,17 +88,19 @@ export class TG {
     });
 
     // Сбрасываем лимиты в полночь MSK (21:00 UTC)
-    cron.schedule("0 0 21 * * *", async () => {
-      logger.info("Сброс лимитов в полночь MSK");
-      // Сброс пользователей (как сейчас, но реализуй, если нужно)
-      // Сброс ключей SAUCENAO
+    // cron.schedule("0 0 21 * * *", () => {
+    //   logger.info("Запланированный сброс лимитов пользователей в полночь MSK");
+    // });
+
+    // Сброс ключей SCRAPER
+    cron.schedule("0 0 21 1 * *", async () => {
+      // 1-е число, полночь MSK
+      logger.info("Сброс ключей SCRAPER");
       await this.prisma.apiKey.updateMany({
-        where: { type: "SAUCENAO", isActive: false },
+        where: { type: "SCRAPER" },
         data: { isActive: true },
       });
-      logger.info(
-        "Ключи SAUCENAO восстановлены: longRemaining=100, isActive=true",
-      );
+      logger.info("Все ключи SCRAPER активированы");
     });
   }
 

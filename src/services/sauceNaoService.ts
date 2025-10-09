@@ -126,6 +126,49 @@ export const sauceNaoService = {
           `Ошибка в sauceNaoService (попытка ${attempts}): ${error.message}`,
           error.stack,
         );
+
+        if (error.response?.status && sauceKey && scraperKey) {
+          const status = error.response.status;
+          await prisma.$transaction(async (tx) => {
+            if (status === 429) {
+              // Rate limit
+              await tx.apiKey.update({
+                where: { id: scraperKey!.id },
+                data: { isActive: false },
+              });
+              logger.warn(
+                `Scraper ключ ${scraperKey!.id} отключён на 60 сек (429)`,
+              );
+              setTimeout(async () => {
+                try {
+                  await prisma.apiKey.update({
+                    where: { id: scraperKey!.id },
+                    data: { isActive: true },
+                  });
+                  logger.info(`Scraper ключ ${scraperKey!.id} восстановлен`);
+                } catch (err: any) {
+                  logger.error(
+                    `Ошибка восстановления Scraper ключа ${scraperKey!.id}: ${err.message}`,
+                  );
+                }
+              }, 60000); // 60 сек
+            } else if (status === 403) {
+              // Quota exceeded
+              await tx.apiKey.update({
+                where: { id: scraperKey!.id },
+                data: { isActive: false },
+              });
+              logger.warn(
+                `Scraper ключ ${scraperKey!.id} отключён (403 quota)`,
+              );
+              // Восстановление по cron
+            } else {
+              // Другие ошибки: Retry или игнор
+              logger.error(`Ошибка Scraper: ${status}`);
+            }
+          });
+        }
+
         if (sauceKey) {
           logger.warn(
             `Деактивация ключа SAUCENAO:${sauceKey.id} из-за ошибки: ${error.message}`,
