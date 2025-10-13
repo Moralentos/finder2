@@ -5,7 +5,7 @@ services:
     image: finder2:latest
     build:
       context: .
-      dockerfile: Containerfile
+      dockerfile: Dockerfile
     environment:
       - DATABASE_URL=postgresql://finder2user:securepassword@postgres:5432/finder2?schema=public
       - TOKEN=${TOKEN}
