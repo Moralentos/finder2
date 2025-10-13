@@ -1,7 +1,7 @@
 FROM node:20-slim
 
-# Установка OpenSSL для Prisma
-RUN apt-get update -y && apt-get install -y openssl && rm -rf /var/lib/apt/lists/*
+# Установка зависимостей для sharp и Prisma
+RUN apt-get update -y && apt-get install -y openssl libvips-dev build-essential python3 && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
