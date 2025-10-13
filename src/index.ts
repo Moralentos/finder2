@@ -13,6 +13,6 @@ if (!token) {
 }
 
 (async (): Promise<void> => {
-  const bot = new TG(token);
+  const bot = new TG(token!); // Уверены, что token не undefined
   await bot.start();
 })();

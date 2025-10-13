@@ -2,7 +2,7 @@ import { PrismaClient } from "@prisma/client";
 
 interface User {
   id: string;
-  telegramId: number;
+  telegramId: string;
   username: string | null;
   status: "ORDINARY" | "PREMIUM" | "ADMIN";
   createdAt: Date;
