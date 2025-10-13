@@ -58,7 +58,7 @@ services:
       postgres:
         condition: service_healthy
     command: ["npx", "prisma", "migrate", "deploy"]
-    restart: no
+    restart: never
 
 volumes:
   postgres_data:
