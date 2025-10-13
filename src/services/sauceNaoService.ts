@@ -17,13 +17,13 @@ export const sauceNaoService = {
         sauceKey = await keyManager.getAvailableKey(prisma, "SAUCENAO");
         if (!sauceKey) {
           logger.warn("Нет доступных ключей SauceNAO");
-          return "error:🚫 Лимит ключей SauceNAO исчерпан. Попробуй позже.";
+          return "Что-то пошло не так, попробуй ещё раз позже!";
         }
 
         scraperKey = await keyManager.getAvailableKey(prisma, "SCRAPER");
         if (!scraperKey) {
           logger.warn("Нет доступных ключей ScraperAPI");
-          return "error:🚫 Лимит ключей ScraperAPI исчерпан. Попробуй позже.";
+          return "Что-то пошло не так, попробуй ещё раз позже!";
         }
 
         const sauceNAOUrl = `https://saucenao.com/search.php?db=999&output_type=2&numres=1&url=${encodeURIComponent(imageUrl)}&api_key=${sauceKey.apiKey}`;
@@ -80,47 +80,43 @@ export const sauceNaoService = {
 
           const title = dataResult.title || dataResult.source || null;
 
-          // Если нет названия, возвращаем стилизованное сообщение об ошибке
+          // Если нет названия, возвращаем сообщение об отсутствии результата
           if (!title) {
             logger.info(`Нет результатов от SauceNAO (попытка ${attempts})`);
-            return `🚫 <b>Не получилось найти</b>\n<i>Попробуй другое изображение!</i>\n\n⏲️ <b>Остаток лимита:</b> ${longRemaining}/100 запросов в день`;
+            return ` <b>Не получилось найти</b>\n<i>Попробуй другое изображение!</i>\n\n⏲️ <b>Остаток лимита:</b> ${longRemaining}/100 запросов в день`;
           }
 
           // Формируем массив строк для существующих полей
-          const output: string[] = [`🎨 <b>Результат поиска:</b>`];
+          const output: string[] = [` <b>Результат поиска:</b>`];
           if (header.similarity) {
-            output.push(`🔍 <b>Сходство:</b> <i>${header.similarity}%</i>`);
+            output.push(` <b>Сходство:</b> <i>${header.similarity}%</i>`);
           }
-          output.push(`📖 <b>Название:</b> <i>${title}</i>`);
+          output.push(` <b>Название:</b> <code>${title}</code>\n`);
           if (dataResult.ext_urls?.length > 0) {
             const escapedUrls = dataResult.ext_urls
               .map((url: string) => url.replace(/&/g, "&amp;"))
               .join(", ");
-            output.push(`🔗 <b>Ссылки:</b> ${escapedUrls}`);
+            output.push(` <b>Ссылки:</b> ${escapedUrls}`);
           }
           const author = dataResult.author || dataResult.member_name;
           if (author) {
             output.push(`✍️ <b>Автор:</b> <i>${author}</i>`);
           }
           if (dataResult.part) {
-            output.push(`📺 <b>Сезон/Эпизод:</b> <i>${dataResult.part}</i>`);
+            output.push(` <b>Сезон/Эпизод:</b> <i>${dataResult.part}</i>`);
           }
           if (dataResult.year) {
-            output.push(`📅 <b>Год:</b> <i>${dataResult.year}</i>`);
+            output.push(` <b>Год:</b> <i>${dataResult.year}</i>`);
           }
           if (dataResult.est_time) {
             output.push(`⏰ <b>Тайминг:</b> <i>${dataResult.est_time}</i>`);
           }
-          output.push(
-            `\n─\n⏲️ <b>Остаток лимита:</b> ${longRemaining}/100 запросов в день`,
-          );
-
           logger.info(`Успешный поиск на SauceNAO (попытка ${attempts})`);
           return output.join("\n");
         }
 
         logger.info(`Нет результатов от SauceNAO (попытка ${attempts})`);
-        return `🚫 <b>Не получилось найти</b>\n<i>Попробуй другое изображение!</i>\n\n⏲️ <b>Остаток лимита:</b> ${longRemaining}/100 запросов в день`;
+        return ` <b>Не получилось найти</b>\n<i>Попробуй другое изображение!</i>\n\n⏲️ <b>Остаток лимита:</b> ${longRemaining}/100 запросов в день`;
       } catch (error: any) {
         logger.error(
           `Ошибка в sauceNaoService (попытка ${attempts}): ${error.message}`,
@@ -186,6 +182,6 @@ export const sauceNaoService = {
     logger.error(
       `Все ${maxRetries} попыток поиска провалились для ${imageUrl}`,
     );
-    return "error:🚫 Ошибка поиска: все доступные ключи исчерпаны или недействительны. Попробуй позже.";
+    return "Что-то пошло не так, попробуй ещё раз позже!";
   },
 };

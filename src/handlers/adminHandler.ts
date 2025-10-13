@@ -95,7 +95,7 @@ export const adminHandler =
         `Статистика бота:\n` +
         `Сегодня поисков: ${todayUses}\n` +
         `Новых пользователей сегодня: ${newUsers}\n` +
-        `Остаток SauceNAO: ${saucenaoRemaining}/100\n` +
+        `Остаток: ${saucenaoRemaining}/100\n` +
         `Остаток ScraperAPI: ${scraperRemaining}/6000`;
 
       return ctx.reply(stats);

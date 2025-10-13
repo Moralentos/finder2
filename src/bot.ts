@@ -1,5 +1,5 @@
 // src/bot.ts
-import { Bot, Context, session, SessionFlavor } from "grammy";
+import { Bot, Context, Keyboard, session, SessionFlavor } from "grammy";
 import { limit } from "@grammyjs/ratelimiter";
 import { PrismaClient } from "@prisma/client";
 import { photoHandler } from "./handlers/photoHandler";
@@ -61,6 +61,8 @@ export class TG {
     );
     this.core.use(rateLimitMiddleware(this.prisma));
 
+    const keyboard = new Keyboard().text("Профиль").resized().persistent();
+
     this.core.command("start", async (ctx) => {
       const userId = String(ctx.from?.id);
       if (!userId) return;
@@ -71,21 +73,51 @@ export class TG {
       });
       await ctx.reply(
         `Привет! Отправь фото для поиска аниме. Лимит: ${Config.maxUserRequestsPerDay}/сутки.`,
+        { reply_markup: keyboard },
       );
     });
 
-    this.core.command("stats", adminHandler("stats", this.prisma));
-    this.core.command("profile", async (ctx) => {
-      await ctx.reply(`Остаток запросов: ${ctx.session.todayUses}`);
+    this.core.hears("Профиль", async (ctx) => {
+      const userId = ctx.from?.id;
+      if (!userId) return;
+
+      const user = await this.prisma.user.findUnique({
+        where: { telegramId: String(userId) },
+      });
+
+      if (!user) {
+        return ctx.reply("Пользователь не найден.");
+      }
+
+      // Используем данные из сессии
+      const todayUses =
+        Config.maxUserRequestsPerDay -
+        (ctx.session.todayUses ?? Config.maxUserRequestsPerDay);
+      const remaining = ctx.session.todayUses ?? Config.maxUserRequestsPerDay;
+
+      const message = `
+<b>Профиль:</b>
+- ID: ${user.telegramId}
+- Использовано запросов сегодня: ${todayUses}
+- Остаток запросов: ${remaining > 0 ? remaining : 0}
+- Дата регистрации: ${user.createdAt.toLocaleDateString()}
+      `;
+
+      await ctx.reply(message, { parse_mode: "HTML", reply_markup: keyboard });
     });
+
+    this.core.command("stats", adminHandler("stats", this.prisma));
     this.core.command("admin", adminHandler("admin", this.prisma));
     this.core.on("message:photo", photoHandler(this.prisma));
 
-    this.core.on("message", async (ctx) => {
-      if (!ctx.message?.photo) {
-        await ctx.reply(`Макс. запросов/день: ${Config.maxUserRequestsPerDay}`);
-      }
-    });
+    // this.core.on("message", async (ctx) => {
+    //   if (!ctx.message?.photo) {
+    //     await ctx.reply(
+    //       `Макс. запросов/день: ${Config.maxUserRequestsPerDay}`,
+    //       { reply_markup: keyboard },
+    //     );
+    //   }
+    // });
 
     // Сбрасываем лимиты в полночь MSK (21:00 UTC)
     // cron.schedule("0 0 21 * * *", () => {

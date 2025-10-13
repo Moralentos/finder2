@@ -87,7 +87,7 @@ export const photoHandler =
         await ctx.api.editMessageText(
           ctx.chat.id,
           loadingMessage.message_id,
-          "Ищу изображение на SauceNAO...",
+          "Ищу изображение...",
         );
 
         const imageUrl = await uploadToTmpFiles(imageBuffer);
@@ -131,7 +131,7 @@ export const photoHandler =
         await ctx.api.editMessageText(
           ctx.chat.id,
           loadingMessage.message_id,
-          `${sauceResult}\n<b>Остаток запросов:</b> ${ctx.session.todayUses}`,
+          `${sauceResult}`,
           {
             parse_mode: "HTML",
             // @ts-ignore
