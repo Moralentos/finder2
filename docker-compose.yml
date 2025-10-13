@@ -1,0 +1,64 @@
+version: '3.8'
+
+services:
+  finder2:
+    image: finder2:latest
+    build:
+      context: .
+      dockerfile: Containerfile
+    environment:
+      - DATABASE_URL=postgresql://finder2user:securepassword@postgres:5432/finder2?schema=public
+      - TOKEN=${TOKEN}
+    depends_on:
+      prisma-migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    volumes:
+      - logs:/app/logs
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.2'
+          memory: 256M
+
+  postgres:
+    image: postgres:14
+    environment:
+      - POSTGRES_USER=finder2user
+      - POSTGRES_PASSWORD=securepassword
+      - POSTGRES_DB=finder2
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U finder2user -d finder2"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.2'
+          memory: 256M
+
+  prisma-migrate:
+    image: finder2:latest
+    environment:
+      - DATABASE_URL=postgresql://finder2user:securepassword@postgres:5432/finder2?schema=public
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["npx", "prisma", "migrate", "deploy"]
+    restart: no
+
+volumes:
+  postgres_data:
+  logs:
