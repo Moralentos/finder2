@@ -10,14 +10,13 @@ import cron from "node-cron";
 import { Config } from "./config";
 import { run } from "@grammyjs/runner";
 
-// Определяем интерфейс SessionData
+// SessionData interface
 interface SessionData {
   todayUses: number;
   isProcessingPhoto: boolean;
-  lastResetDate?: string; // Для отслеживания даты последнего сброса
+  lastResetDate?: string;
 }
 
-// Определяем SessionContext как Context с SessionFlavor<SessionData>
 export type SessionContext = Context & SessionFlavor<SessionData>;
 
 export class TG {
@@ -31,7 +30,7 @@ export class TG {
 
   public async init(): Promise<void> {
     await this.prisma.$connect();
-    logger.info("Prisma подключен к PostgreSQL");
+    logger.info("Подключено к Prisma PostgreSQL");
   }
 
   public async setup(): Promise<void> {
@@ -41,43 +40,48 @@ export class TG {
         limit: 10,
         onLimitExceeded: async (ctx) => {
           logger.warn(
-            `[RateLimiter] Пользователь ${ctx.from?.id} превысил лимит запросов`,
+            `[RateLimiter] Пользователь ${ctx.from?.id} превысил лимит`,
           );
-          await ctx.reply("⏳ Слишком много запросов! Подождите немного.");
+          await ctx.reply("Слишком много запросов! Подождите немного.");
         },
         keyGenerator: (ctx) => ctx.from?.id.toString() || "unknown",
       }),
     );
 
-    // Инициализируем сессию
     this.core.use(
       session({
         initial: (): SessionData => ({
           todayUses: Config.maxUserRequestsPerDay,
           isProcessingPhoto: false,
-          lastResetDate: new Date().toISOString().split("T")[0], // Текущая дата
+          lastResetDate: new Date().toISOString().split("T")[0],
         }),
       }),
     );
+
     this.core.use(rateLimitMiddleware(this.prisma));
 
-    const keyboard = new Keyboard().text("Профиль").resized().persistent();
+    const keyboard = new Keyboard()
+      .text("📊 Статистика")
+      .resized()
+      .persistent();
 
     this.core.command("start", async (ctx) => {
       const userId = String(ctx.from?.id);
       if (!userId) return;
+
       await this.prisma.user.upsert({
         where: { telegramId: userId },
         update: { username: ctx.from?.username || "" },
         create: { telegramId: userId, username: ctx.from?.username || "" },
       });
+
       await ctx.reply(
-        `Привет! Отправь фото для поиска аниме. Лимит: ${Config.maxUserRequestsPerDay}/сутки.`,
+        `Добро пожаловать! Отправьте фото для поиска. Лимит: ${Config.maxUserRequestsPerDay}/день.`,
         { reply_markup: keyboard },
       );
     });
 
-    this.core.hears("Профиль", async (ctx) => {
+    this.core.hears("📊 Статистика", async (ctx) => {
       const userId = ctx.from?.id;
       if (!userId) return;
 
@@ -89,62 +93,87 @@ export class TG {
         return ctx.reply("Пользователь не найден.");
       }
 
-      // Используем данные из сессии
       const todayUses =
         Config.maxUserRequestsPerDay -
         (ctx.session.todayUses ?? Config.maxUserRequestsPerDay);
       const remaining = ctx.session.todayUses ?? Config.maxUserRequestsPerDay;
 
       const message = `
-<b>Профиль:</b>
-- ID: ${user.telegramId}
-- Использовано запросов сегодня: ${todayUses}
-- Остаток запросов: ${remaining > 0 ? remaining : 0}
-- Дата регистрации: ${user.createdAt.toLocaleDateString()}
+      <b>Статистика:</b>
+      - ID: ${user.telegramId}
+      - Использовано сегодня: ${todayUses}
+      - Осталось: ${remaining > 0 ? remaining : 0}
+      - Дата регистрации: ${user.createdAt.toLocaleDateString()}
       `;
-
-      await ctx.reply(message, { parse_mode: "HTML", reply_markup: keyboard });
+      await ctx.reply(message, {
+        parse_mode: "HTML",
+        reply_markup: keyboard,
+      });
     });
 
     this.core.command("stats", adminHandler("stats", this.prisma));
     this.core.command("admin", adminHandler("admin", this.prisma));
     this.core.on("message:photo", photoHandler(this.prisma));
 
-    // this.core.on("message", async (ctx) => {
-    //   if (!ctx.message?.photo) {
-    //     await ctx.reply(
-    //       `Макс. запросов/день: ${Config.maxUserRequestsPerDay}`,
-    //       { reply_markup: keyboard },
-    //     );
-    //   }
-    // });
+    // Cron-задание для проверки и активации ключей
+    cron.schedule("0 0 * * *", async () => {
+      // Каждые 24 часа в 00:00 UTC
+      logger.info("Запуск проверки ключей для активации");
+      const now = new Date();
+      const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000); // 24 часа назад
 
-    // Сбрасываем лимиты в полночь MSK (21:00 UTC)
-    // cron.schedule("0 0 21 * * *", () => {
-    //   logger.info("Запланированный сброс лимитов пользователей в полночь MSK");
-    // });
+      const keysToReactivate = await this.prisma.apiKey.findMany({
+        where: {
+          longRemaining: 0,
+          isActive: false,
+          firstUsedAt: {
+            lte: oneDayAgo,
+            not: null, // Убедимся, что firstUsedAt установлено
+          },
+        },
+      });
 
-    // Сброс ключей SCRAPER
-    cron.schedule("0 0 21 1 * *", async () => {
-      // 1-е число, полночь MSK
+      for (const key of keysToReactivate) {
+        await this.prisma.apiKey.update({
+          where: { id: key.id },
+          data: {
+            isActive: true,
+            firstUsedAt: null, // Сбрасываем метку
+            longRemaining:
+              key.type === "SAUCENAO" ? 100 : key.isNew ? 5000 : 1000,
+          },
+        });
+        logger.info(
+          `Ключ ${key.type}:${key.id} активирован, firstUsedAt сброшено`,
+        );
+      }
+
+      logger.info(
+        `Проверка ключей завершена, активировано: ${keysToReactivate.length}`,
+      );
+    });
+
+    // SCRAPER: сброс isActive ежемесячно
+    cron.schedule("0 0 1 * *", async () => {
+      // 1-го числа каждого месяца в 00:00 UTC
       logger.info("Сброс ключей SCRAPER");
       await this.prisma.apiKey.updateMany({
         where: { type: "SCRAPER" },
         data: { isActive: true },
       });
-      logger.info("Все ключи SCRAPER активированы");
+      logger.info("Ключи SCRAPER сброшены");
     });
   }
 
   public async start(): Promise<void> {
     await this.init();
     await this.setup();
-    logger.info("Starting bot");
+    logger.info("Запуск бота");
     run(this.core);
   }
 
   public async stop(): Promise<void> {
-    logger.info("Stopping bot");
+    logger.info("Остановка бота");
     await this.prisma.$disconnect();
     await this.core.stop();
   }

@@ -13,6 +13,7 @@ export interface ApiKeyWithRemaining {
   isActive: boolean;
   isNew: boolean;
   createdAt: Date;
+  firstUsedAt?: Date | null; // Добавляем новое поле
 }
 
 export const keyManager = {
@@ -25,27 +26,40 @@ export const keyManager = {
         const keys = await prisma.apiKey.findMany({
           where: { type, isActive: true },
         });
+        logger.info(`Доступные ключи ${type}: ${keys.length}`);
 
-        logger.info(`Найдено ключей для ${type}: ${keys.length}`);
         if (keys.length === 0) {
-          logger.warn(`Нет доступных ключей для ${type}`);
+          logger.warn(`Нет доступных ключей ${type}`);
           return null;
         }
 
-        // Случайный выбор ключа
+        // Выбираем случайный ключ
         const randomIndex = Math.floor(Math.random() * keys.length);
         const key = keys[randomIndex];
 
-        // Для SCRAPER: Нет проверки longRemaining, только isActive
+        // Если ключ еще не использовался (firstUsedAt null), устанавливаем время первого использования
+        if (!key.firstUsedAt) {
+          await prisma.apiKey.update({
+            where: { id: key.id },
+            data: {
+              firstUsedAt: new Date(),
+            },
+          });
+          logger.info(
+            `Ключ ${type}:${key.id} использован впервые, установлено firstUsedAt`,
+          );
+        }
+
+        // SCRAPER: longRemaining игнорируется, возвращаем 0
         if (type === "SCRAPER") {
-          logger.info(`Выбран ключ SCRAPER:${key.id}`);
-          return { ...key, longRemaining: 0 }; // Игнорируем longRemaining
+          logger.info(`Выбран SCRAPER ключ: ${key.id}`);
+          return { ...key, longRemaining: 0 };
         } else {
-          // Для SAUCENAO оставь как есть
+          // SAUCENAO
           const effectiveLimit = key.longRemaining ?? 0;
           if (effectiveLimit > 0) {
             logger.info(
-              `Выбран ключ ${type}:${key.id}, остаток: ${effectiveLimit}`,
+              `Выбран ${type} ключ: ${key.id}, остаток: ${effectiveLimit}`,
             );
             return { ...key };
           }
@@ -53,7 +67,7 @@ export const keyManager = {
         }
       } catch (error: any) {
         logger.error(
-          `Ошибка при получении ключей для ${type}: ${error.message}`,
+          `Ошибка при получении ключа ${type}: ${error.message}`,
           error.stack,
         );
         return null;
@@ -65,22 +79,21 @@ export const keyManager = {
     tx: Prisma.TransactionClient,
     keyId: string,
     type: "SAUCENAO" | "SCRAPER",
-    longRemaining?: number, // Для SAUCENAO: из ответа API, для SCRAPER: декремент
+    longRemaining?: number,
   ): Promise<void> {
     if (type === "SCRAPER") {
-      // Для SCRAPER: Нет декремента, ничего не меняем (или только isActive по ошибкам)
+      // SCRAPER: обновление не требуется
       return;
     } else {
       return lock.acquire(`usage:${keyId}`, async () => {
         try {
           const key = await tx.apiKey.findUnique({ where: { id: keyId } });
           if (!key) {
-            logger.error(`Ключ ${type}:${keyId} не найден в базе`);
+            logger.error(`Ключ ${type}:${keyId} не найден`);
             throw new Error("Ключ не найден");
           }
 
           const newRemaining = longRemaining ?? key.longRemaining ?? 0;
-
           await tx.apiKey.update({
             where: { id: keyId },
             data: {
@@ -88,9 +101,8 @@ export const keyManager = {
               isActive: newRemaining > 0,
             },
           });
-
           logger.info(
-            `Ключ ${type}:${keyId} обновлён, longRemaining: ${newRemaining}, isActive: ${newRemaining > 0}`,
+            `Обновлен ключ ${type}:${keyId}, longRemaining: ${newRemaining}, isActive: ${newRemaining > 0}`,
           );
         } catch (error: any) {
           logger.error(

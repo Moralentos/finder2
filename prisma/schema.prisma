@@ -27,6 +27,7 @@ model ApiKey {
   isActive      Boolean  @default(true)
   isNew         Boolean  @default(true) // Только для SCRAPER
   createdAt     DateTime @default(now())
+  firstUsedAt   DateTime? // Новое поле для времени первого использования
 
   @@map("api_keys")
   @@index([type, isActive])
